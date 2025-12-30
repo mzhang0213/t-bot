@@ -1,2 +1,3 @@
-/main/.next
-/main/node_modules
+/main/t-bot-frontend/.next
+/main/t-bot-frontend/node_modules
+.idea
