@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 import httpx
 import polyline
+import json
 from typing import List, Dict, Any, Optional
+from pathlib import Path
 
 app = FastAPI()
 
@@ -244,5 +246,69 @@ async def get_mbta_vehicles(route_id: str):
     try:
         response = await client.get_predictions_and_vehicles(route_id)
         return response
+    finally:
+        await client.close()
+
+
+@app.post("/api/mbta/export-subway-data")
+async def export_subway_data():
+    """Export subway route and stop data to a JSON file for data generation"""
+    client = MBTAApiClient()
+    try:
+        routes = await client.get_routes()
+        
+        subway_data = {
+            "routes": [],
+            "stops": {},
+            "metadata": {
+                "description": "MBTA subway stops data for rider simulation",
+                "types_included": [0, 1]  # Light rail and Subway only
+            }
+        }
+        
+        for route in routes:
+            route_attrs = route.get("attributes", {})
+            route_type = route_attrs.get("type")
+            
+            # Filter for subway and light rail only (types 0 and 1)
+            # 0: Light rail (Green Line), 1: Subway (Red, Orange, Blue)
+            if route_type in [0, 1]:
+                route_info = {
+                    "id": route.get("id"),
+                    "type": route_type,
+                    "name": route_attrs.get("long_name") or route_attrs.get("short_name", ""),
+                    "color": route_attrs.get("color"),
+                    "description": route_attrs.get("description")
+                }
+                subway_data["routes"].append(route_info)
+                
+                # Get stops for this route
+                stops = await client.get_stops_for_route(route.get("id"))
+                route_stops = []
+                for stop in stops:
+                    stop_attrs = stop.get("attributes", {})
+                    route_stops.append({
+                        "id": stop.get("id"),
+                        "name": stop_attrs.get("name"),
+                        "latitude": stop_attrs.get("latitude"),
+                        "longitude": stop_attrs.get("longitude"),
+                        "wheelchair_boarding": stop_attrs.get("wheelchair_boarding"),
+                        "location_type": stop_attrs.get("location_type", 0)
+                    })
+                
+                subway_data["stops"][route.get("id")] = route_stops
+        
+        # Save to file
+        output_path = Path(__file__).parent / "subway_stops_data.json"
+        with open(output_path, "w") as f:
+            json.dump(subway_data, f, indent=2)
+        
+        return {
+            "success": True,
+            "message": f"Exported data for {len(subway_data['routes'])} subway routes",
+            "file_path": str(output_path),
+            "total_routes": len(subway_data["routes"]),
+            "routes": [r["name"] for r in subway_data["routes"]]
+        }
     finally:
         await client.close()
